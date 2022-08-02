@@ -78,6 +78,8 @@ type OpStat struct {
 	// The RequestID for a request operation is the same as the ResponseID for
 	// the corresponding reply, so this field will be the same for request/reply pairs.
 	RequestID int32 `json:"request_id,omitempty"`
+
+	SourceIp string // add by mello
 }
 
 // jsonGet retrieves serialized json req/res via the channel-like arg;
@@ -139,12 +141,17 @@ func (stat *OpStat) escaper(req, res <-chan *bytes.Buffer) *escaper.Escaper {
 	esc.Register('c', stat.getCommand)
 	esc.Register('o', stat.getConnectionNum)
 	esc.Register('i', stat.getRequestID)
+	esc.Register('s', stat.getSourceIp)
 	esc.RegisterArg('t', stat.getTime)
 	esc.RegisterArg('q', jsonGet(wReq))
 	esc.RegisterArg('r', jsonGet(wRes))
 	esc.RegisterArg('Q', cond(stat.RequestData))
 	esc.RegisterArg('R', cond(stat.ReplyData))
 	return esc
+}
+
+func (stat *OpStat) getSourceIp() string {
+	return fmt.Sprintf("%s", stat.SourceIp)
 }
 
 func (stat *OpStat) getOpType() string {

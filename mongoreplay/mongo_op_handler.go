@@ -37,7 +37,7 @@ type stream struct {
 	op               *RawOp
 	opTimeStamp      time.Time
 	state            streamState
-	netFlow, tcpFlow gopacket.Flow
+	netFlow, tcpFlow, ipFlow gopacket.Flow
 }
 
 // Reassembled receives the new slice of reassembled data and forwards it to the
@@ -77,7 +77,7 @@ type bidi struct {
 	connectionNumber int64
 }
 
-func newBidi(netFlow, tcpFlow gopacket.Flow, opStream *MongoOpStream, num int64) *bidi {
+func newBidi(netFlow, tcpFlow, ipFlow gopacket.Flow, opStream *MongoOpStream, num int64) *bidi {
 	bidi := &bidi{connectionNumber: num}
 	bidi.streams[0] = &stream{
 		bidi:        bidi,
@@ -86,6 +86,7 @@ func newBidi(netFlow, tcpFlow gopacket.Flow, opStream *MongoOpStream, num int64)
 		op:          &RawOp{},
 		netFlow:     netFlow,
 		tcpFlow:     tcpFlow,
+		ipFlow:      ipFlow,
 	}
 	bidi.streams[1] = &stream{
 		bidi:        bidi,
@@ -94,6 +95,7 @@ func newBidi(netFlow, tcpFlow gopacket.Flow, opStream *MongoOpStream, num int64)
 		op:          &RawOp{},
 		netFlow:     netFlow.Reverse(),
 		tcpFlow:     tcpFlow.Reverse(),
+		ipFlow:      ipFlow.Reverse(),
 	}
 	bidi.opStream = opStream
 	return bidi
@@ -157,7 +159,7 @@ func NewMongoOpStream(heapBufSize int) *MongoOpStream {
 }
 
 // New is the factory method called by the tcpassembly to generate new tcpassembly.Stream.
-func (os *MongoOpStream) New(netFlow, tcpFlow gopacket.Flow) tcpassembly.Stream {
+func (os *MongoOpStream) New(netFlow, tcpFlow, ipFlow gopacket.Flow) tcpassembly.Stream {
 	key := bidiKey{netFlow, tcpFlow}
 	rkey := bidiKey{netFlow.Reverse(), tcpFlow.Reverse()}
 	if bidi, ok := os.bidiMap[key]; ok {
@@ -165,7 +167,7 @@ func (os *MongoOpStream) New(netFlow, tcpFlow gopacket.Flow) tcpassembly.Stream 
 		delete(os.bidiMap, key)
 		return bidi.streams[1]
 	}
-	bidi := newBidi(netFlow, tcpFlow, os, <-os.connectionCounter)
+	bidi := newBidi(netFlow, tcpFlow, ipFlow, os, <-os.connectionCounter)
 	os.bidiMap[rkey] = bidi
 	atomic.AddInt32(&bidi.openStreamCount, 1)
 	go bidi.streamOps()
@@ -288,6 +290,7 @@ func (bidi *bidi) handleStreamStateInMessage(stream *stream) {
 			Seen:              &PreciseTime{stream.opTimeStamp},
 			SrcEndpoint:       stream.netFlow.Src().String(),
 			DstEndpoint:       stream.netFlow.Dst().String(),
+			SourceIp:          stream.ipFlow.Src().String(), // add by mello
 			SeenConnectionNum: bidi.connectionNumber,
 		}
 

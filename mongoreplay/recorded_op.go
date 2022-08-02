@@ -19,6 +19,7 @@ type RecordedOp struct {
 	PlayedAt            *PreciseTime `bson:",omitempty"`
 	Generation          int
 	Order               int64
+	SourceIp            string // add by mello
 }
 
 // ConnectionString gives a serialized representation of the endpoints

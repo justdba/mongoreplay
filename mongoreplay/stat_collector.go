@@ -9,8 +9,11 @@ package mongoreplay
 import (
 	"bytes"
 	"encoding/json"
+	"github.com/Shopify/sarama"
+	"github.com/rcrowley/go-metrics"
 	"io"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -101,10 +104,34 @@ func newStatCollector(opts StatOptions, collectFormat string, isPairedMode bool,
 			Buffer: []OpStat{},
 		}
 	case "format":
+		// add by mello
+		filePtr, err := os.Open("/etc/mongotrace.json")
+		if err != nil {
+			panic("Error, kafka conf not found!")
+		}
+		defer filePtr.Close()
+		var info KafkaConf
+		decoder := json.NewDecoder(filePtr)
+		err = decoder.Decode(&info)
+		if err != nil {
+			panic("Error, kafka conf decode failed!")
+		}
+		metrics.UseNilMetrics = true // do not Memory leak
+		config := sarama.NewConfig()
+		config.Producer.RequiredAcks = sarama.NoResponse
+		config.Producer.Partitioner = sarama.NewRandomPartitioner
+		config.Producer.Return.Successes = true
+		producer, _ := sarama.NewSyncProducer(info.Bootstrap, config)
+		msg := &sarama.ProducerMessage{}
+		msg.Topic = info.KafkaTopic
+
 		statRec = &TerminalStatRecorder{
 			out:      o,
 			truncate: !opts.NoTruncate,
 			format:   opts.Format,
+			producer: producer, // add by mello
+			msg:      msg,      // add by mello
+			ops:      info.Ops, // add by mello
 		}
 	}
 
@@ -185,6 +212,16 @@ type TerminalStatRecorder struct {
 	out      io.WriteCloser
 	truncate bool
 	format   string
+	producer sarama.SyncProducer     // add by mello
+	msg      *sarama.ProducerMessage // add by mello
+	ops      []string                // add by mello
+}
+
+// add by mello
+type KafkaConf struct {
+	KafkaTopic string
+	Bootstrap  []string
+	Ops        []string
 }
 
 // BufferedStatRecorder implements the StatRecorder interface using an in-memory
@@ -282,6 +319,16 @@ func (dsr *TerminalStatRecorder) RecordStat(stat *OpStat) {
 	go getPayload(stat.RequestData, req)
 	go getPayload(stat.ReplyData, res)
 
+	// add by mello
+	data := stat.escaper(req, res).Expand(dsr.format)
+	for _, op := range dsr.ops {
+		if strings.Contains(data, op) {
+			dsr.msg.Value = sarama.StringEncoder(data)
+			_, _, _ = dsr.producer.SendMessage(dsr.msg)
+		}
+	}
+
+	/*
 	output := new(bytes.Buffer)
 
 	output.WriteString(stat.escaper(req, res).Expand(dsr.format))
@@ -292,6 +339,7 @@ func (dsr *TerminalStatRecorder) RecordStat(stat *OpStat) {
 		toolDebugLogger.Logvf(Always, "error recording stat: %v", err)
 		return
 	}
+	*/
 }
 
 // RecordStat doesn't do anything for the NopRecorder
@@ -344,6 +392,7 @@ func (gen *ComparativeStatGenerator) GenerateOpStat(op *RecordedOp, replayedOp O
 		ConnectionNum: op.PlayedConnectionNum,
 		Seen:          &op.Seen.Time,
 		RequestID:     op.Header.RequestID,
+		SourceIp:      op.SourceIp, // add by mello
 	}
 	var playAtHasVal bool
 	if op.PlayAt != nil && !op.PlayAt.IsZero() {
@@ -387,6 +436,7 @@ func (gen *RegularStatGenerator) GenerateOpStat(recordedOp *RecordedOp, parsedOp
 		Command:       meta.Command,
 		ConnectionNum: recordedOp.SeenConnectionNum,
 		Seen:          &recordedOp.Seen.Time,
+		SourceIp:      recordedOp.SourceIp, // add by mello
 	}
 	if msg != "" {
 		stat.Message = msg

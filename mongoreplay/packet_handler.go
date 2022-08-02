@@ -13,7 +13,6 @@ import (
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/layers"
 	"github.com/google/gopacket/pcap"
-	"github.com/google/gopacket/tcpassembly"
 )
 
 // PacketHandler wraps pcap.Handle to maintain other useful information.
@@ -36,7 +35,7 @@ func NewPacketHandler(pcapHandle *pcap.Handle, assemblerOptions AssemblerOptions
 
 // StreamHandler is an io.Closer for a tcpassembly.StreamFactory
 type StreamHandler interface {
-	tcpassembly.StreamFactory
+	StreamFactory
 	io.Closer
 }
 
@@ -98,11 +97,13 @@ func (p *PacketHandler) Handle(streamHandler StreamHandler, numToHandle int) err
 				userInfoLogger.Logv(DebugLow, "Reached end of stream")
 				return nil
 			}
-			if tcpLayer := pkt.Layer(layers.LayerTypeTCP); tcpLayer != nil {
+			// add by mello
+			if tcpLayer, ipLayer := pkt.Layer(layers.LayerTypeTCP), pkt.Layer(layers.LayerTypeIPv4); tcpLayer != nil && ipLayer != nil {
 				userInfoLogger.Logv(DebugHigh, "Assembling TCP layer")
 				assembler.AssembleWithTimestamp(
 					pkt.TransportLayer().TransportFlow(),
 					tcpLayer.(*layers.TCP),
+					ipLayer.(*layers.IPv4),
 					pkt.Metadata().Timestamp) // TODO: use time.Now() here when running in realtime mode
 			}
 			if count == 0 {

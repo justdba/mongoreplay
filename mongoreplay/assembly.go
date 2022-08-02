@@ -179,7 +179,7 @@ type Stream interface {
 // session.
 type StreamFactory interface {
 	// New should return a new stream for the given TCP key.
-	New(netFlow, tcpFlow gopacket.Flow) tcpassembly.Stream
+	New(netFlow, tcpFlow, ipFlow gopacket.Flow) tcpassembly.Stream
 }
 
 func (p *StreamPool) connections() []*connection {
@@ -263,10 +263,10 @@ func (a *Assembler) FlushAll() (closed int) {
 	return
 }
 
-type key [2]gopacket.Flow
+type key [3]gopacket.Flow
 
 func (k *key) String() string {
-	return fmt.Sprintf("%s:%s", k[0], k[1])
+	return fmt.Sprintf("%s:%s:%s", k[0], k[1], k[2])
 }
 
 // StreamPool stores all streams created by Assemblers, allowing multiple
@@ -476,7 +476,7 @@ func (p *StreamPool) getConnection(k key, end bool, ts time.Time) *connection {
 	if end || conn != nil {
 		return conn
 	}
-	s := p.factory.New(k[0], k[1])
+	s := p.factory.New(k[0], k[1], k[2])
 	p.mu.Lock()
 	conn = p.newConnection(k, s, ts)
 	if conn2 := p.conns[k]; conn2 != nil {
@@ -490,8 +490,8 @@ func (p *StreamPool) getConnection(k key, end bool, ts time.Time) *connection {
 
 // Assemble calls AssembleWithTimestamp with the current timestamp, useful for
 // packets being read directly off the wire.
-func (a *Assembler) Assemble(netFlow gopacket.Flow, t *layers.TCP) {
-	a.AssembleWithTimestamp(netFlow, t, time.Now())
+func (a *Assembler) Assemble(netFlow gopacket.Flow, t *layers.TCP, t2 *layers.IPv4) {
+	a.AssembleWithTimestamp(netFlow, t, t2, time.Now())
 }
 
 // AssembleWithTimestamp reassembles the given TCP packet into its appropriate
@@ -507,14 +507,14 @@ func (a *Assembler) Assemble(netFlow gopacket.Flow, t *layers.TCP) {
 //    zero or one calls to StreamFactory.New, creating a stream
 //    zero or one calls to Reassembled on a single stream
 //    zero or one calls to ReassemblyComplete on the same stream
-func (a *Assembler) AssembleWithTimestamp(netFlow gopacket.Flow, t *layers.TCP, timestamp time.Time) {
+func (a *Assembler) AssembleWithTimestamp(netFlow gopacket.Flow, t *layers.TCP, t2 *layers.IPv4, timestamp time.Time) {
 	// Ignore empty TCP packets
 	if !t.SYN && !t.FIN && !t.RST && len(t.LayerPayload()) == 0 {
 		return
 	}
 
 	a.ret = a.ret[:0]
-	key := key{netFlow, t.TransportFlow()}
+	key := key{netFlow, t.TransportFlow(), t2.NetworkFlow()}
 	var conn *connection
 	// This for loop handles a race condition where a connection will close,
 	// lock the connection pool, and remove itself, but before it locked the
